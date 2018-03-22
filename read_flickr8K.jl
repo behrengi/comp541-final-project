@@ -1,4 +1,3 @@
-#import Images: load
 include("Read.jl")
 import Read
 
@@ -17,4 +16,4 @@ tokens = Read.TokensDict(raw_captions)
 
 # train = Read.ImageTokens(image_dir, raw_training, tokens)
 # dev = Read.ImageTokens(image_dir, raw_dev, tokens)
-test = Read.ImageTokens(tokens, image_dir, raw_test)
+# test = Read.ImageTokens(tokens, image_dir, raw_test)
