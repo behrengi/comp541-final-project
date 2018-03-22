@@ -4,7 +4,6 @@ import Read
 using JSON
 using PyCall
 
-@pyimport nltk
 dir = "/Users/bihterakyol/Desktop/SPRING2018/COMP541/datasets/COCO/"
 text_dir = string(dir, "annotations/")
 train_image_dir = string(dir, "train2014")
@@ -31,5 +30,6 @@ end
 tokens = Dict(collect(values(tokens)))
 
 i2w, wi2 = Read.CreateDictionaries(tokens)
+
 # train = Read.ImageTokens(train_image_dir, raw_training, tokens)
 # val = Read.ImageTokens(val_image_dir, raw_dev, tokens)
