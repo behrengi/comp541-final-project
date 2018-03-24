@@ -26,11 +26,11 @@ filename1 -> [Sentence1["token1", "token2", ...], Sentence2["token1", "token2", 
 function TokensDict(raw_captions)
     tokens = Dict()
     for i in 1:size(raw_captions, 1)
-        filename, _ = split(raw_captions[i, 1], '#')
+        filename, _ = String.(split(raw_captions[i, 1], '#'))
         if !(filename in keys(tokens))
             tokens[filename] = Any[]
         end
-        push!(tokens[filename], split(lowercase(raw_captions[i, 2])))
+        push!(tokens[filename], String.(split(lowercase(raw_captions[i, 2]))))
     end
     return(tokens)
 end
@@ -50,8 +50,8 @@ function ImageTokens(tokens, image_dir)
         ############################
         push!(images, CaptionedImage(
             load(string(image_dir, filename)),
-            tokens[filename]
-            ))
+            tokens[filename])
+            )
     end
     return(images)
 end
@@ -66,6 +66,7 @@ function CreateDictionaries(tokens; minfreq = 5)
     tokencounts = countmap(collect(FlattenTokens(tokens)))
     tokencounts = filter((t, f) -> f>=minfreq, tokencounts)
     i2w = collect(keys(tokencounts))
+    push!(i2w, "_UNK_")
     w2i = Dict(zip(i2w, 1:length(i2w)))
     return(i2w, w2i)
 end
@@ -80,13 +81,13 @@ function Ngram(tokens, n)
     end
     for i in 1:(length(tokens) - n + 1)
         from, to = i, i + n - 1
-        push!(ngrams, tokens[from:to])
+        push!(ngrams, convert(Array{String}, tokens[from:to]))
     end
     return(ngrams)
 end
 
 """
-Returns an ngram dictionary (key: filenames, values: array of sentence ngrams)
+Returns an ngram dictionary (key: image filenames, values: array of sentence ngrams)
 given tokensDict.
 
 ngramDict:
@@ -96,23 +97,15 @@ filename1 -> [Sentence1[ngram1, ngram2, ...], Sentence2[ngram1, ngram2, ...], ..
 .
 """
 function NgramDict(tokens_dict, n)
-    ngrams = Dict()
+    ngrams = Any[]
     for (filename, tok_sentences) in tokens_dict
         ngrams[filename] =  map(x -> Read.Ngram(x, n), tok_sentences)
     end
     return(ngrams)
 end
 
-function Precision(hypot_ngrams, candid_ngrams)
-    match_count = 0
-    for ngram in candid_ngrams
-        if ngram in hypot_ngrams; match_count += 1; end
-    end
-    return(match_count ./ length(candid_ngrams))
-end
-
 """
-caption_length: Dict(length1 => [index, [filename, caption; filename; caption, ...]])
+caption_length: Dict(length1 => [index, [imagefilename, caption; imagefilename; caption, ...]])
 index: index of the next minibatch item. 
 """
 function CaptionLengthDict(captions)
