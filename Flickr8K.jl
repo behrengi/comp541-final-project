@@ -1,6 +1,6 @@
-module Flickr8K
-
 include("Read.jl")
+
+module Flickr8K
 import Read
 
 struct data
@@ -41,13 +41,8 @@ function Import()
     dev_images = raw_dev
     test_images = raw_test
 
-<<<<<<< HEAD
-    train_captions, dev_captions, test_captions = (Read.CaptionLengthDict(filter((k, v) -> k in dataset, captions_dict))
-                                                    for dataset in [raw_train, raw_dev, raw_test])
-=======
     train_captions, dev_captions, test_captions = (filter((k, v) -> k in dataset, captions_dict)
-                                    for dataset in [raw_train, raw_dev, raw_test])
->>>>>>> bd2b71226a8498e730e66f8f3f02bd2962a0e40b
+                                                    for dataset in [raw_train, raw_dev, raw_test])
 
     return(data(i2w, w2i, train_images, dev_images, test_images, 
                 train_captions, dev_captions, test_captions))
