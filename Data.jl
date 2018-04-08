@@ -1,25 +1,34 @@
+for p in ("JSON","PyCall")
+    Pkg.installed(p) == nothing && Pkg.add(p)
+end
 include("Read.jl")
 
 module Data
 
 import Read
 import JSON
-using JLD
 using PyCall
 @pyimport nltk.tokenize as tokenizer
 
 struct data
     i2w
     w2i
-    train_images
-    dev_imaves
-    test_images
+    train_features
+    dev_features
+    test_features
     train_captions
     dev_captions
     test_captions
 end
 
-function Import(raw_captions, raw_train, raw_dev, raw_test, image_dir)
+function Import(captions_dir, train_dir, dev_dir, test_dir, image_dir)
+    println("readdlm begin")
+    raw_captions = readdlm(captions_dir, '\t', comments=false)
+    raw_train = readdlm(train_dir)[1:5]
+    raw_dev = readdlm(dev_dir)[1:5]
+    raw_test = readdlm(test_dir)[1:5]
+    println("readdlm end")
+
     println("tokens dict")
     captions_dict = Read.TokensDict(raw_captions)
 
@@ -42,65 +51,70 @@ function Import(raw_captions, raw_train, raw_dev, raw_test, image_dir)
     end 
     println("captions end")
     
-    println("train images start")
-    #train_images = Read.ImageDict(image_dir, raw_train)
-    # test_images = Read.ImageDict(image_dir, raw_test)
-    # dev_images = Read.ImageDict(image_dir, raw_dev)
+    if length(image_dir) == 1 # Flickr8k and Flickr30k images
+        train_features = Read.FeatureDict(image_dir[1], raw_train)
+        println("training images features extracted")
 
-    train_images = Array{Any}(1, length(train_captions))
-    dev_images = Array{Any}(1, length(dev_captions))
-    test_images = Array{Any}(1, length(test_captions))
-    println("train images end")
+        test_features = Read.FeatureDict(image_dir[1], raw_test)
+        println("dev images features extracted")
 
-    return(data(i2w, w2i, train_images, dev_images, test_images, 
+        dev_features = Read.FeatureDict(image_dir[1], raw_dev)
+        println("test images features extracted")
+    else # COCO images are in two separate folders (train and val)
+        train_features = Read.FeatureDict(image_dir[1], raw_train)
+        println("training images features extracted")
+
+        test_features = Read.FeatureDict(image_dir[2], raw_test)
+        println("dev images features extracted")
+
+        dev_features = Read.FeatureDict(image_dir[2], raw_dev)
+        println("test images features extracted")
+    end
+
+    # train_features = rand(6000, 1)
+    # test_features = rand(1000, 1)
+    # dev_features = rand(1000, 1)
+
+    return(data(i2w, w2i, train_features, dev_features, test_features, 
                 train_captions, dev_captions, test_captions))
 end
 
+function ImportFlickr8K()
+    #dir = joinpath(pwd, "data", "FLICKR8K")
+    dir = "/Users/bihterakyol/Desktop/SPRING2018/COMP541/datasets/FLICKR8K"
+    text_dir = joinpath(dir, "Flickr8k_text")
+    image_dir = joinpath(dir, "Flickr8k_Dataset")
 
-function ImportFlickr8K(dir="/Users/bihterakyol/Desktop/SPRING2018/COMP541/datasets/FLICKR8K/")
-    text_dir = string(dir, "Flickr8k_text/")
-    image_dir = string(dir, "Flickr8k_Dataset/")
+    captions_dir = joinpath(text_dir, "Flickr8k.lemma.token.txt")
+    train_images_dir = joinpath(text_dir, "Flickr_8k.trainImages.txt")
+    dev_images_dir = joinpath(text_dir, "Flickr_8k.devImages.txt")
+    test_images_dir = joinpath(text_dir, "Flickr_8k.testImages.txt")
 
-    raw_captions = readdlm(string(text_dir, "Flickr8k.lemma.token.txt"), '\t', comments=false)
-    raw_train = readdlm(string(text_dir, "Flickr_8k.trainImages.txt" ))
-    raw_dev = readdlm(string(text_dir, "Flickr_8k.devImages.txt" ))
-    raw_test = readdlm(string(text_dir, "Flickr_8k.testImages.txt" ))
-
-    Import(raw_captions, raw_train, raw_dev, raw_test, image_dir)
+    Import(captions_dir, train_images_dir, dev_images_dir, test_images_dir, [image_dir])
 end
 
-function ImportFlickr30K(dir="/Users/bihterakyol/Desktop/SPRING2018/COMP541/datasets/FLICKR30K/")
-    image_dir = string(dir, "flickr30k_images/")
-    json_dir = string(dir, "dataset.json") 
-    
-    raw_captions_fn, train_fn, dev_fn, test_fn = JSONtoTxt(json_dir, dir)
-    raw_captions = readdlm(raw_captions_fn, '\t', comments=false)
-    raw_train = readdlm(train_fn)
-    raw_dev = readdlm(dev_fn)
-    raw_test = readdlm(test_fn)
+function ImportFlickr30K()
+    #dir = joinpath(pwd, "data", "FLICKR30K")
+    dir = "/Users/bihterakyol/Desktop/SPRING2018/COMP541/datasets/FLICKR30K"
+    image_dir = joinpath(dir, "flickr30k_images")
+    json_dir = joinpath(dir, "dataset.json")    
+    captions_dir, train_dir, dev_dir, test_dir = JSONtoTxt(json_dir, dir)
 
-    Import(raw_captions, raw_train, raw_dev, raw_test, image_dir)
+    Import(captions_dir, train_dir, dev_dir, test_dir, [image_dir])
 end
 
-function ImportCOCO(dir="/Users/bihterakyol/Desktop/SPRING2018/COMP541/datasets/COCO/")  
-    text_dir = string(dir, "annotations/")
-    image_dir = ""
-    train_image_dir = string(dir, "train2014/") 
-    test_image_dir = string(dir, "test2014/") # val2014???? downloaded wrong image data
-    json_dir = string(dir, "dataset.json")
+function ImportCOCO()  
+    #dir = joinpath(pwd, "data", "COCO")
+    dir = "/Users/bihterakyol/Desktop/SPRING2018/COMP541/datasets/COCO"
+    train_images_dir = joinpath(dir, "train2014") 
+    test_images_dir = joinpath(dir, "val2014") 
+    json_dir = joinpath(dir, "dataset.json")
 
     println("json to txt begin")
-    raw_captions_fn, train_fn, dev_fn, test_fn = JSONtoTxt(json_dir, dir)
+    captions_dir, train_dir, dev_dir, test_dir = JSONtoTxt(json_dir, dir)
     println("json to txt end")
 
-    println("readdlm begin")
-    raw_captions = readdlm(raw_captions_fn, '\t', comments=false)
-    raw_train = readdlm(train_fn)
-    raw_dev = readdlm(dev_fn)
-    raw_test = readdlm(test_fn)
-    println("readdlm end")
-
-    Import(raw_captions, raw_train, raw_dev, raw_test, image_dir)
+    Import(captions_dir, train_dir, dev_dir, test_dir, [train_images_dir, test_images_dir])
 end
 
 """
@@ -111,12 +125,12 @@ It will also parse tokens using nltk to match Flickr8k parsing.
 2nd, 3rd, 4th will have the imagefilenames for train, dev and test datasets respectively.
 """
 function JSONtoTxt(json_dir, save_dir)
-    rawcaptions_filename = string(save_dir, "/", "tokens.txt")
-    train_filename = string(save_dir, "/", "train.txt")
-    dev_filename = string(save_dir, "/", "dev.txt")
-    test_filename = string(save_dir, "/", "test.txt")
+    captions_dir = string(save_dir, "/", "tokens.txt")
+    train_dir = string(save_dir, "/", "train.txt")
+    dev_dir = string(save_dir, "/", "dev.txt")
+    test_dir = string(save_dir, "/", "test.txt")
     
-    if !(all([isfile(file) for file in [train_filename, dev_filename, test_filename]]))
+    if !(all([isfile(file) for file in [train_dir, dev_dir, test_dir]]))
         println("txt files does not exist, creating them")
 
         println("reading json file")
@@ -142,17 +156,16 @@ function JSONtoTxt(json_dir, save_dir)
                 for (i, sentence) in enumerate(image["sentences"][1:5])
                     caption = Read.JoinWithSpaces(tokenizer.word_tokenize(sentence["raw"]))
                     filename_id = join([filename, "#", string(i - 1)])
-                    captions = vcat(captions, reshape([filename_id, caption], 1, 2))
+                    captions = [captions; [filename_id, caption]]
                 end
             end
             j = j + 1
         end
-        writedlm(rawcaptions_filename, captions)
-        writedlm(train_filename, train)
-        writedlm(dev_filename, dev)
-        writedlm(test_filename, test)   
+        writedlm(captions_dir, captions)
+        writedlm(train_dir, train)
+        writedlm(dev_dir, dev)
+        writedlm(test_dir, test)   
     end   
-    return(rawcaptions_filename, train_filename, dev_filename, test_filename)
+    return(captions_dir, train_dir, dev_dir, test_dir)
 end
-
 end
