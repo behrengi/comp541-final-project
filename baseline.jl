@@ -7,7 +7,7 @@ include("Read.jl")
 
 using Read
 using Data
-using StatsBase: countmap  
+using StatsBase: countmap
 using PyCall
 using Knet
 @pyimport nltk.translate.bleu_score as nl
@@ -19,10 +19,10 @@ caption_length_dict: Dict(length1 => [filename, caption; filename; caption, ...]
 output: Any[minibatch1(x, y), minibatch2(x, y), ...]
 
 From the original paper (Xu et al., 2016):
-Then, during training we randomly sample a length and retrieve a 
-mini-batch of size 64 of that length. We found that this greatly 
-improved convergence speed with no noticeable diminishment in 
-performance. 
+Then, during training we randomly sample a length and retrieve a
+mini-batch of size 64 of that length. We found that this greatly
+improved convergence speed with no noticeable diminishment in
+performance.
 """
 function Minibatch(input, w2i, atype; batchsize=64)
     froms = Dict(k => 1 for k in keys(input))
@@ -52,7 +52,7 @@ end
     for (filename, sentences) in samples
         tokens = Any[]
         for s in sentences
-            s in keys(w2i) ? push!(tokens, w2i[s]) : push!(tokens, w2i["_UNK_"])  
+            s in keys(w2i) ? push!(tokens, w2i[s]) : push!(tokens, w2i["_UNK_"])
         end
         push!(filenames, filename)
         push!(captions, atype(tokens))
@@ -60,7 +60,7 @@ end
     return (filenames, captions)
 end
 
-# 
+#
 function RandomModelTrain2(parameters, data)
     sum_caption_length, n_captions, frequency_dict, n = parameters
     images, captions = data
@@ -71,7 +71,7 @@ function RandomModelTrain2(parameters, data)
     for caption in caption_ngrams
         for ngram in caption
             if ngram in keys(frequency_dict)
-                frequency_dict[ngram] += 1 
+                frequency_dict[ngram] += 1
             else
                 frequency_dict[ngram] = 1
             end
@@ -84,7 +84,7 @@ end
 function RandomModelPredict2(parameters, input, i2w)
     sum_caption_length, n_captions, frequency_dict, n = parameters
     mean_caption_length = sum_caption_length / n_captions
-    
+
     sentence = ["_BOS_"]
     while (length(sentence) < mean_caption_length) && (sentence[end] != "_EOS_")
         reldict = filter((k, v) -> i2w[Int(k[1])] == sentence[end], frequency_dict)
@@ -112,7 +112,7 @@ function RandomModelTrain(parameters, data)
     for caption in caption_ngrams
         for ngram in caption
             if ngram in keys(frequency_dict)
-                frequency_dict[ngram] += 1 
+                frequency_dict[ngram] += 1
             else
                 frequency_dict[ngram] = 1
             end
@@ -144,55 +144,59 @@ function RandomModelPredict(parameters, input, i2w)
     return(all_pred)
 end
 
-atype = gpu() >= 0 ? KnetArray{Float32}  : Array{Float32}
+function ROUTINE()
+    atype = gpu() >= 0 ? KnetArray{Float32}  : Array{Float32}
 
-data = Data.ImportFlickr8K()
-i2w, w2i = data.i2w, data.w2i;
-train_captions, test_captions = data.train_captions, data.test_captions
-train_features, test_features = data.train_features, data.test_features
+    data = Data.ImportFlickr8K()
+    i2w, w2i = data.i2w, data.w2i;
+    train_captions, test_captions = data.train_captions, data.test_captions
+    train_features, test_features = data.train_features, data.test_features
 
-println("data importing end")
+    println("data importing end")
 
-n = 4 # ngram n
-ytrain = collect(values(train_captions))
-ytest = collect(values(test_captions))
-xtrain = collect(values(train_features))
-xtest = collect(values(test_features))
+    n = 4 # ngram n
+    ytrain = collect(values(train_captions))
+    ytest = collect(values(test_captions))
+    xtrain = collect(values(train_features))
+    xtest = collect(values(test_features))
 
-EPOCHS = 1
-test_pred = train_pred = []
-parameters = (0, 0, Dict(), n) # parameter init
-bleu_weights = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
-batches = []
+    EPOCHS = 1
+    test_pred = train_pred = []
+    parameters = (0, 0, Dict(), n) # parameter init
+    bleu_weights = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+    batches = []
 
-#to do the minibatching as described in the paper
-train_count = Read.CaptionCountDict(train_captions) 
-@time for epoch in 1:EPOCHS
-    pred_data = Dict()
-    batches = Minibatch(train_count, w2i, atype)
-    # batches = Minibatch2(train_processed, w2i)
-    # for (x, y, b) in batches
-    for (x, y) in batches
-        # x has the images, y has the captions. 
+    #to do the minibatching as described in the paper
+    train_count = Read.CaptionCountDict(train_captions)
+    @time for epoch in 1:EPOCHS
+        pred_data = Dict()
+        batches = Minibatch(train_count, w2i, atype)
+        # batches = Minibatch2(train_processed, w2i)
+        # for (x, y, b) in batches
+        for (x, y) in batches
+            # x has the images, y has the captions.
 
-        # This baseline model finds the most frequent ngram in all the captions
-        # and repeates the ngram until the predicted caption length more or less
-        # matches the mean caption length of the training set. "More or less" because
-        # mean caption length of the training set is a floating point number.
-        parameters = RandomModelTrain(parameters, (x, y))
+            # This baseline model finds the most frequent ngram in all the captions
+            # and repeates the ngram until the predicted caption length more or less
+            # matches the mean caption length of the training set. "More or less" because
+            # mean caption length of the training set is a floating point number.
+            parameters = RandomModelTrain(parameters, (x, y))
+        end
+        println("out")
+        # println("BLEU score: ", nl.corpus_bleu(y, pred))
+        test_pred = RandomModelPredict(parameters, xtest, i2w)
+        train_pred = RandomModelPredict(parameters, xtrain, i2w)
+
     end
-    println("out")
-    # println("BLEU score: ", nl.corpus_bleu(y, pred))
-    test_pred = RandomModelPredict(parameters, xtest, i2w)
-    train_pred = RandomModelPredict(parameters, xtrain, i2w)
-    
+
+
+    println("train BLEU: ", 100 * nl.corpus_bleu(ytrain, train_pred),
+        " test BLEU: ", 100 * nl.corpus_bleu(ytest, test_pred))
+
+    for b_w in bleu_weights
+        println(" train BLEU: ", 100 * nl.corpus_bleu(ytrain, train_pred, b_w),
+        " test BLEU: ", 100 * nl.corpus_bleu(ytest, test_pred, b_w))
+    end
 end
 
-
-println("train BLEU: ", 100 * nl.corpus_bleu(ytrain, train_pred),
-     " test BLEU: ", 100 * nl.corpus_bleu(ytest, test_pred))
-
-for b_w in bleu_weights
-    println(" train BLEU: ", 100 * nl.corpus_bleu(ytrain, train_pred, b_w),
-     " test BLEU: ", 100 * nl.corpus_bleu(ytest, test_pred, b_w))
-end
+ROUTINE()

@@ -1,4 +1,4 @@
-for p in ("Images","StatsBase","MAT","JLD","Knet")
+for p in ("Images","StatsBase","MAT","JLD","Knet", "DataStructures", "Distances")
     Pkg.installed(p) == nothing && Pkg.add(p)
 end
 
@@ -6,9 +6,11 @@ module Read
 
 using Images
 using StatsBase: countmap
-using MAT  
+using MAT
 using JLD
 using Knet
+using DataStructures
+using Distances
 
 ftype = Float32
 atype = gpu() >= 0 ? KnetArray{ftype} : Array{ftype}
@@ -44,8 +46,8 @@ end
 
 
 # """
-# tokens: a dict where keys are the image files and values are the tokenized sentences. 
-# Returns an array of CaptionImages. 
+# tokens: a dict where keys are the image files and values are the tokenized sentences.
+# Returns an array of CaptionImages.
 # """
 # function ImageTokens(tokens, image_dir)
 #     images = CaptionedImage[]
@@ -63,36 +65,40 @@ end
 #     return(images)
 # end
 
+function Covariance(A)
+    A = atype(A')
+    n = size(A, 2)
+    C = sum(A' * A for i in 1:n)
+    return Array{Float32}(C ./ n)
+end
+
 """
 Loads the images and returns a dictionary where keys are the filenames and the
 values are the images.
 """
-function FeatureDict(image_dir, filenames)
-    image_dict = Dict()
-    feature_file = joinpath(image_dir, "features.jld") 
+function FeatureDict(image_dir, featuredict_name, filenames)
+    image_dict = OrderedDict()
+    feature_file = joinpath(image_dir, string(featuredict_name, "features.jld"))
+    println(feature_file)
     if !isfile(feature_file)
+        println("creating file")
         feature_dict = Dict()
         vgg_layers = VggLoad()["layers"][1:35]
-        i = 1  
-        largest = 0
-        smallest = 0
+        i = 1
         for file in filenames
-            features = VggFeatures(Images.load(joinpath(image_dir, file)), vgg_layers)
-
-            largest = max(maximum(features), largest)
-            smallest = min(minimum(features), smallest)
-
-            feature_dict[file] = features     
-            i = i + 1
+            feature_dict[file] = VggFeatures(Images.load(joinpath(image_dir, file)), vgg_layers)
+            i += 1
             if i % 200 == 0
                 println("image loading process: %", 100 * (i / length(filenames)))
             end
         end
 
+        features = cat(3, values(feature_dict)...)
+        features_mean = mean(features, 3)
+        features_std = std(features, 3, mean=features_mean)
         for file in filenames
-            feature_dict[file] = (feature_dict[file] - smallest) / (largest - smallest)
+            feature_dict[file] = (feature_dict[file] .- features_mean) ./ features_std
         end
-
         JLD.save(feature_file, "feature_dict", feature_dict)
     else
         feature_dict = JLD.load(feature_file)["feature_dict"]
@@ -151,12 +157,12 @@ end
 
 """
 caption_length: Dict(length1 => [(imagefilename, caption), (imagefilename, caption), ...])
-index: index of the next minibatch item. 
+index: index of the next minibatch item.
 """
 function CaptionCountDict(captions)
     captions_by_length = Dict()
     for (filename, sentences) in captions
-        for sentence in sentences 
+        for sentence in sentences
             sentence_length = length(sentence)
             n_input = (filename, sentence) # new input
             if haskey(captions_by_length, sentence_length)
@@ -165,7 +171,7 @@ function CaptionCountDict(captions)
                 captions_by_length[sentence_length] = [n_input]
             end
         end
-    end 
+    end
     return(captions_by_length)
 end
 
@@ -203,14 +209,16 @@ function PreProcessImage(image; image_size=224)
     end
     im_center = floor.(Int, center(resized))
     im_size_halved = Int(image_size / 2)
-    cropped = resized[(im_center[1] - im_size_halved) : (im_center[1] + im_size_halved - 1), 
+    cropped = resized[(im_center[1] - im_size_halved) : (im_center[1] + im_size_halved - 1),
                         (im_center[2] - im_size_halved) : (im_center[2] +  im_size_halved - 1), :]
     return(atype(cropped))
-    
+
 end
 
 function VggFeatures(input_dir, vgg_layers)
-    
+    # use gpu to extract features if exists
+    atype = atype = gpu() >= 0 ? KnetArray{Float32} : Array{Float32}
+
     input = Read.PreProcessImage(input_dir)
     input = atype(reshape(input, (size(input)..., 1)))
     for layer in vgg_layers
@@ -227,13 +235,20 @@ function VggFeatures(input_dir, vgg_layers)
             input = relu.(input)
         end
     end
-    return(reshape(input, (size(input, 1) * size(input, 2), size(input, 3))))
+    return Array{Float32}(reshape(input, (size(input, 1) * size(input, 2), size(input, 3))))
 end
 
 function OneHot(i, size)
     onehot = spzeros(1, size)
     onehot[i] = 1
     return(onehot)
+end
+
+"""
+Given the onehot vector and index to word dictionary, returns the word.
+"""
+function ToWord(onehot, i2w)
+    return(i2w[findfirst(onehot .== 1)...])
 end
 
 end
