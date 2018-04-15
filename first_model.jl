@@ -22,7 +22,7 @@ function MakeBatch(batch, w2i)
     for (index, val) in enumerate(batch)
         caption = val[2]
         for t in 1:caption_len
-            tok = w2i[caption[t] in keys(w2i) ? caption[t] : "_UNK_"]
+            tok = w2i[haskey(w2i, caption[t]) ? caption[t] : "_UNK_"]
             captions[t][index, tok] = 1
         end
     end
@@ -84,7 +84,7 @@ end
 LSTM weights and biases
 
 """
-function WInit(atype, embed, dict, feature, place, hidden; winit=0.01)
+function WInit(atype, embed, dict, feature, place, hidden)
     w = Array{Any}(13)
     w[1] = xavier(dict, embed) # embedding
     w[2] = xavier(embed + hidden + feature , 4*hidden) # lstm
@@ -95,11 +95,11 @@ function WInit(atype, embed, dict, feature, place, hidden; winit=0.01)
     w[7] = zeros(1, hidden) # h_init bias
     w[8] = xavier(embed, dict) # l_0 Eq.7
     w[9] = xavier(hidden, embed) # l_h Eq.7
-    w[10] = xavier(embed, feature) # l_z Eq.7
+    w[10] = xavier(feature, embed) # l_z Eq.7
     w[11] = xavier(hidden, feature) # attention w1
     w[12] = zeros(feature, place) # attention bias
     w[13] = xavier(feature, 1) # attention w2
-    return map(x -> atype(winit .* x), w)
+    return map(x -> atype(x), w)
 end
 
 """
@@ -136,7 +136,7 @@ end
 A simple MLP init function.
 """
 function Init(weight, bias, input)
-    return tanh.(input * weight .+ bias)
+    return relu.(input * weight .+ bias)
 end
 
 # hidden * w .+ features .+ bias
@@ -147,8 +147,8 @@ Calculates attention weights and returns the context vector.
 function Attention(param, features, hidden)
     wei, bias, attention_out = param[11], param[12], param[13];
 
-    combined = hidden * wei .+ reshape(bias, 1, size(bias)...) .+ features;
-    combined = tanh.(combined);
+    combined = features .+ hidden * wei .+ reshape(bias, 1, size(bias)...);
+    combined = relu.(combined);
     combined = KnetArray{Float32}(permutedims(Array{Float32}(getval(combined)), [1, 3, 2]));
 
     s1, s2 = size(combined);
@@ -158,13 +158,8 @@ function Attention(param, features, hidden)
     exp_alpha = exp.(alpha .- maximum(alpha, 2))
     alpha = exp_alpha ./ sum(exp_alpha, 2)
 
-    # context = mean(alpha .* permutedims(features, (1, 3, 2)), 2); alpha = nothing;
-    alpha = reshape(alpha, size(alpha)..., 1);
-    alpha = KnetArray{Float32}(permutedims(Array{Float32}(getval(alpha)), [1, 3, 2]))
-    context = alpha .* features
-    context = mean(context, 3);
-
-    context = reshape(context, size(context, 1), size(context, 2));
+    context = mean(alpha .* KnetArray{Float32}(permutedims(Array{Float32}(getval(features)), (1, 3, 2))), 2)
+    context = reshape(context, size(context, 1), size(context, 3))
 
     return context
 end
@@ -185,7 +180,7 @@ function RowMax(x)
     return Int.(ceil.(vec(findmax(x, 2)[2]) ./ size(x, 1)))
 end
 
-function Loss(param, features, outputs, input, drop_lstm, drop, atype)
+function Loss(param, features, outputs, input, drop_lstm, drop, atype, i2w)
     c_init, c_bias = param[4], param[5]
     h_init, h_bias = param[6], param[7]
 
@@ -206,12 +201,21 @@ function Loss(param, features, outputs, input, drop_lstm, drop, atype)
 
         p_output = P(param, input, state)
 
-        input = RowMax(Array{Float32}(getval(p_output)))
+        p_output_nonknet = Array{Float32}(getval(p_output))
+        input = RowMax(p_output_nonknet)
 
-        loss -= sum(atype(output) .* log.(p_output .+ eps_array))
+        # for i in 1:size(output, 1)
+        #     println(i, ": ", i2w[output[i, :] .== 1][1], " - ")
+        #     for s in sortperm(p_output_nonknet[i, :], rev=true)[1:4]
+        #         println("\t", p_output_nonknet[i, s], ": ", i2w[s])
+        #     end
+        # end
+        # readline(STDIN)
+
+        loss += sum(atype(output) .* log.(p_output .+ eps_array))
     end
 
-    return loss
+    return -loss
 end
 
 function Predict(param, features, i2w, eos, bos)
@@ -236,9 +240,10 @@ function Predict(param, features, i2w, eos, bos)
         p_output = P(param, input, state)
         input = RowMax(Array{Float32}(getval(p_output)))
         for i in 1:n
-            if input[i] == eos || is_eos[i]
+            if input[i] == eos
                 is_eos[i] = true
-            else
+                push!(captions[i], "_EOS_")
+            elseif !is_eos[i]
                 push!(captions[i], i2w[input[i]])
                 if length(captions[i]) > 50
                     is_eos[i] = true
@@ -282,9 +287,6 @@ function ROUTINE()
     ytest = collect(values(test_captions))
     ydev = collect(values(dev_captions))
 
-    # p = 800 # practice size
-    # ytrain, ytest, ydev = ytrain[1:p], ytest[1:p], ydev[1:p]
-
     println("End of data importing")
 
     length_train = Read.CaptionCountDict(train_captions) # captions by length
@@ -292,27 +294,28 @@ function ROUTINE()
 
     # end of sentence and beginning of sentence tokens
     bos = [w2i["_BOS_"]]
-    eos = [w2i["_EOS_"]]
+    eos = w2i["_EOS_"]
 
-
-    embed = 512 # word embedding size
     dict = length(w2i) # dictionary size
     feature = 512 # first dim of features
+    embed = feature # word embedding size
     place = 196 # second dim of features
-    hidden = 1000 # lstm size
+    hidden = 1800 # lstm size
     drop_lstm = 0 # dropout to lstm (i, f, o)
     drop = 0 # dropout to the context and hidden vectors
-    lr = 0.01 # learning rate
+    lr = 0.001 # learning rate
     bs = 64 # batch-size
-    EPOCHS = 5
+    EPOCHS = 3
     train_bleus = []
     test_bleus = []
+    train_loss = []
     final_test_bleu = []
     final_train_bleu = []
+    weights = []
     bleu_type = eye(4, 4)
 
     w = WInit(atype, embed, dict, feature, place, hidden)
-    opt = map(x -> Sgd(lr = lr), w)
+    opt = map(x -> Rmsprop(lr = lr), w)
 
     test_predict = nothing
     train_predict = nothing
@@ -327,19 +330,25 @@ function ROUTINE()
 
 
         batches = Minibatch(length_train, w2i, bs)
+        b = 0
         @time for (x, y) in batches
             caption_length = length(y)
+            if caption_length > 5
+                continue
+            end
+            b += 1
+
             n_caption = length(x)
 
             features = atype(permutedims(cat(3, [train_features[name] for name in x]...), [3, 2, 1]))
             input = Int.(repmat(bos, n_caption))
 
-            grads, loss = gradient(w, features, y, input, drop_lstm, drop, atype)
+            grads, loss = gradient(w, features, y, input, drop_lstm, drop, atype, i2w)
             sum_loss += loss / n_caption / caption_length
-            update!(w, grads, opt); grads = nothing
+            update!(w, grads, opt)
         end
 
-        epoch_loss = sum_loss / length(batches); batches = nothing
+        epoch_loss = sum_loss / b
         println("EPOCH: ", i, " " , epoch_loss)
 
 
@@ -350,49 +359,31 @@ function ROUTINE()
         #                  Loss(w, xtest, ytest, bos, 0, 0, Array{Float32}) /
         #                  length(ytest))
 
-        println("predictions are being made")
-        train_predict = Predict(w, xtrain, i2w, eos, bos, 500, atype)
-        println("train done, doing test")
-        test_predict = Predict(w, xtest, i2w, eos, bos, 500, atype)
-        println("predictions are done")
+        # println("predictions are being made")
+        train_predict = Predict(w, xtrain, i2w, eos, bos, 1000, atype)
+        # println("train done, doing test")
+        test_predict = Predict(w, xtest, i2w, eos, bos, 1000, atype)
+        # println("predictions are done")
 
-        println("bleu score")
+        # println("bleu score")
         train_bleu = nl.corpus_bleu(ytrain, train_predict)
         test_bleu = nl.corpus_bleu(ytest, test_predict)
-        println(train_bleu, test_bleu)
+        # println(train_bleu, " ", test_bleu)
         push!(train_bleus, train_bleu)
         push!(test_bleus, test_bleu)
-        println("bleu scores are saved")
+        push!(weights, map(x -> Array{Float32}(x), w))
+        # println("bleu scores are saved")
 
-        # println("train bleu: ", train_bleu)
-        # println("test bleu: ", test_bleu)
+        println("train bleu: ", train_bleu)
+        println("test bleu: ", test_bleu)
 
-        # push!(train_weights, map(x -> Array{Float32}(x), w))
-        # println("w pushed")
-
-        # push!(train_loss, Float32(epoch_loss))
+        push!(train_loss, Float32(epoch_loss))
         # println("loss pushed")
-
-
-
-        # dev_loss = push!(dev_loss,
-        #                  Loss(w, xdev, ydev, bos, 0, 0, Array{Float32}) /
-        #                  length(xdev))
-
-        # if i % 5 == 0
-        #     train_predict = Predict(w, xtrain, w2i, i2w, eos, bos)
-        #     dev_predict = Predict(w, xdev, w2i, i2w, eos, bos)
-        #     test_predict = Predict(w, xtest, w2i, i2w, eos, bos)
-
-        #     train_bleu = push!(train_bleu, nl.corpus_bleu(ytrain, train_predict))
-        #     dev_bleu = push!(dev_bleu, nl.corpus_bleu(ydev, dev_predict))
-        #     test_bleu = push!(test_bleu, nl.corpus_bleu(ytest, test_predict))
-        # end
     end
 
-    # println("saving model")
-    # JLD.save(joinpath(pwd(), "loss.jld"), "test_loss", test_loss, "train_loss", train_loss)
-    # println("loss saved")
+    println("saving model")
+    JLD.save(joinpath(pwd(), "loss.jld"), "train_loss", train_loss, "weights", weights)
+    println("loss saved")
 
 
     for i in 1:size(bleu_type, 1)

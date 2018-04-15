@@ -77,12 +77,11 @@ Loads the images and returns a dictionary where keys are the filenames and the
 values are the images.
 """
 function FeatureDict(image_dir, featuredict_name, filenames)
-    image_dict = OrderedDict()
+    feature_dict = OrderedDict()
     feature_file = joinpath(image_dir, string(featuredict_name, "features.jld"))
     println(feature_file)
     if !isfile(feature_file)
         println("creating file")
-        feature_dict = Dict()
         vgg_layers = VggLoad()["layers"][1:35]
         i = 1
         for file in filenames
